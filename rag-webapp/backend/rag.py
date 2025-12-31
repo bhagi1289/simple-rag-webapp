@@ -4,19 +4,44 @@ import os
 from openai import OpenAI
 from backend.db import get_conn
 from backend.logger import logger
+import numpy as np
+import requests
+from huggingface_hub import InferenceClient
+from pgvector.psycopg import register_vector
+
 
 EMBEDDING_MODEL = "hf.co/CompendiumLabs/bge-base-en-v1.5-gguf"
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+HF_TOKEN = os.getenv("HF_TOKEN")
+HF_EMBED_MODEL = os.getenv("HF_EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+
 
 groq_client = OpenAI(
     api_key=GROQ_API_KEY,
     base_url="https://api.groq.com/openai/v1",
 )
 
+client = InferenceClient(provider="hf-inference", api_key=os.environ["HF_TOKEN"])
+
 def embed_text(text: str):
-    return ollama.embed(model=EMBEDDING_MODEL, input=text)["embeddings"][0]
+    # HF feature-extraction usually returns token embeddings (2D). We mean-pool to get sentence embedding (1D).
+    out = client.feature_extraction(text, model=HF_EMBED_MODEL)
+
+    arr = np.asarray(out, dtype=np.float32)
+
+    # If we got token embeddings: (seq_len, dim) -> mean pool -> (dim,)
+    if arr.ndim == 2:
+        arr = arr.mean(axis=0)
+
+    # Optional but recommended for cosine similarity search (normalize)
+    norm = np.linalg.norm(arr)
+    if norm > 0:
+        arr = arr / norm
+
+    return arr.tolist() 
+
 
 def cosine_similarity(a,b):
     dot = sum(x*y for x,y in zip(a,b))
@@ -34,6 +59,7 @@ def add_chunk(chunk: str):
 
     emb = embed_text(chunk)
     with get_conn() as conn:
+        register_vector(conn)
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO rag_chunks (chunk, embedding) VALUES(%s, %s)",
@@ -51,6 +77,7 @@ def retrieve(query: str, top_k: int=3):
     q_emb = embed_text(query)
 
     with get_conn() as conn:
+        register_vector(conn)
         with conn.cursor() as cur:
             cur.execute(
                 '''

@@ -25,7 +25,11 @@ app.add_middleware(
 class AskRequest(BaseModel):
     question: str
     top_k: int = 3
-
+    
+@app.get("/")
+def root():
+    return {"status": "running"}
+    
 @app.get("/health")
 def health():
     return {"status": "ok"}
