@@ -101,8 +101,13 @@ def ask_llm(question: str, top_k: int=3):
     for c, s in retrieved[:5]:
         logger.info(f"SIM={s:.3f} | {c[:80]}")
 
-    MIN_SIM = 0.68
-    filtered = [(c, s) for c, s in retrieved if s >= MIN_SIM]
+    best_sim = float(retrieved[0][1]) if retrieved else 0.0
+
+    # If the best match is decent, keep top_k even if it’s below a hard threshold
+    if best_sim >= 0.50:
+        filtered = retrieved[:top_k]
+    else:
+        filtered = []
 
     logger.info(f"{len(filtered)} chunks passed similarity threshold")
 
